@@ -41,6 +41,16 @@ yarn-error.log
 .idea/
 *.swp
 
+# Local-only artifacts
+.Rhistory
+*.app/
+qr_*.png
+webapp/cloudflared
+webapp/debug_*
+webapp/qr_*.png
+webapp/*.sh
+gdd.tex
+
 # Misc large files
 *.zip
 *.tar.gz

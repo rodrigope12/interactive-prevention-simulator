@@ -1,9 +1,0 @@
-#!/bin/bash
-
-# Open Terminal and run the launch script
-osascript <<EOF
-tell application "Terminal"
-    activate
-    do script "cd /Users/rodrigoperezcordero/Documents/prevencion_pug/webapp && ./launch.sh"
-end tell
-EOF
