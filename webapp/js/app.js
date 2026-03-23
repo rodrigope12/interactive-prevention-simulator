@@ -17,6 +17,8 @@ const GameState = {
     inactivity: 0,          // 0-100% (0 = Active, 100 = Sedentary)
     cigarettesSmoked: 0,
     lifeLostMinutes: 0,
+    monthsSinceLastSmoke: 0,
+    bestRecoveryStreak: 0,
     lastInteraction: Date.now(),
     isDead: false,
     isCollapsed: false,
@@ -134,6 +136,11 @@ const SYMPTOMS = {
     ]
 };
 
+const DEFAULT_MESSAGE = {
+    text: "Hola. Soy tu reflejo. ¿Qué harás conmigo?",
+    source: "Simulador"
+};
+
 // ========================================
 // DOM REFERENCES
 // ========================================
@@ -144,6 +151,17 @@ const UI = {
     addictionCard: document.getElementById('addiction-card'),
     lifeLostCard: document.getElementById('life-lost-card'),
     lifeLostValue: document.getElementById('life-lost-value'),
+    toxicityValue: document.getElementById('toxicity-value'),
+    hungerValue: document.getElementById('hunger-value'),
+    inactivityValue: document.getElementById('inactivity-value'),
+    toxicityBar: document.getElementById('toxicity-bar'),
+    hungerBar: document.getElementById('hunger-bar'),
+    inactivityBar: document.getElementById('inactivity-bar'),
+    streakValue: document.getElementById('streak-value'),
+    packsValue: document.getElementById('packs-value'),
+    riskScoreValue: document.getElementById('risk-score-value'),
+    riskNote: document.getElementById('risk-note'),
+    riskPill: document.getElementById('risk-pill'),
     character: document.getElementById('character'),
     messageCard: document.querySelector('#message-area .glass-card'),
     gameMessage: document.getElementById('game-message'),
@@ -151,7 +169,9 @@ const UI = {
     thoughtBubble: document.getElementById('thought-bubble'),
     smokeCloud: document.getElementById('smoke-cloud'),
     modal: document.getElementById('modal-overlay'),
-    modalBody: document.getElementById('modal-body')
+    modalTitle: document.getElementById('modal-title'),
+    modalBody: document.getElementById('modal-body'),
+    modalReset: document.getElementById('modal-reset')
 };
 
 // ========================================
@@ -159,17 +179,18 @@ const UI = {
 // ========================================
 function init() {
     loadState();
-    updateUI();
-    startGameLoop();
+    restoreSessionFlags();
 
     document.getElementById('btn-smoke').addEventListener('click', actionSmoke);
     document.getElementById('btn-heal').addEventListener('click', actionHeal);
     document.getElementById('btn-exercise').addEventListener('click', actionExercise);
 
-    const resetBtn = document.getElementById('modal-reset');
-    // Ensure we don't bind multiple listeners if possible, or just overwrite onclick in logic often
-    // But for init, it's fine. Logic usually overwrites onclick during events.
-    resetBtn.addEventListener('click', resetGame);
+    UI.modalReset.addEventListener('click', resetGame);
+
+    renderPersistentMessage();
+    updateUI();
+    restoreModalState();
+    startGameLoop();
 }
 
 function loadState() {
@@ -179,21 +200,7 @@ function loadState() {
             const parsed = JSON.parse(saved);
             Object.assign(GameState, parsed);
 
-            // Migration / Sanity Check
-            // If we loaded an old save without 'ageInMonths', default it or reset
-            if (!GameState.ageInMonths || isNaN(GameState.ageInMonths)) {
-                GameState.ageInMonths = CONFIG.START_AGE_MONTHS;
-            }
-            if (!GameState.biologicalAgeInMonths || isNaN(GameState.biologicalAgeInMonths)) {
-                GameState.biologicalAgeInMonths = CONFIG.START_AGE_MONTHS;
-            }
-            // Fix NaN Health
-            if (isNaN(GameState.health)) {
-                GameState.health = 100;
-            }
-            if (GameState.cigarettesSmoked === undefined || isNaN(GameState.cigarettesSmoked)) {
-                GameState.cigarettesSmoked = 0;
-            }
+            sanitizeLoadedState();
         } catch (e) {
             console.error("Save corrupted, resetting", e);
             // Default GameState is already set
@@ -202,8 +209,66 @@ function loadState() {
 }
 
 function saveState() {
-    GameState.lastInteraction = Date.now();
     localStorage.setItem('smokingsim_v2', JSON.stringify(GameState));
+}
+
+function sanitizeLoadedState() {
+    const numericFields = [
+        ['ageInMonths', CONFIG.START_AGE_MONTHS, CONFIG.MAX_LIFESPAN_MONTHS],
+        ['biologicalAgeInMonths', CONFIG.START_AGE_MONTHS, CONFIG.MAX_LIFESPAN_MONTHS + 240],
+        ['health', 0, 100],
+        ['toxicity', 0, 100],
+        ['addiction', 0, 100],
+        ['hunger', 0, 100],
+        ['inactivity', 0, 100],
+        ['cigarettesSmoked', 0, 1000000],
+        ['monthsSinceLastSmoke', 0, 100000],
+        ['bestRecoveryStreak', 0, 100000],
+        ['lastInteraction', 0, Number.MAX_SAFE_INTEGER]
+    ];
+
+    for (const [key, min, max] of numericFields) {
+        const value = Number(GameState[key]);
+        const fallback = key.includes('Age') ? CONFIG.START_AGE_MONTHS : 0;
+        GameState[key] = Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+    }
+
+    GameState.lastInteraction = GameState.lastInteraction || Date.now();
+    GameState.isDead = Boolean(GameState.isDead);
+    GameState.isCollapsed = Boolean(GameState.isCollapsed);
+    GameState.isHospitalized = Boolean(GameState.isHospitalized);
+    GameState.eventsHistory = Array.isArray(GameState.eventsHistory) ? GameState.eventsHistory : [];
+    GameState.bestRecoveryStreak = Math.max(GameState.bestRecoveryStreak, GameState.monthsSinceLastSmoke);
+    GameState.biologicalAgeInMonths = Math.max(GameState.biologicalAgeInMonths, GameState.ageInMonths);
+
+    if (!GameState.causeOfDeath || typeof GameState.causeOfDeath !== 'object') {
+        GameState.causeOfDeath = null;
+    }
+}
+
+function restoreSessionFlags() {
+    if (GameState.isCollapsed) {
+        GameState.isCollapsed = false;
+        GameState.toxicity = Math.min(GameState.toxicity, 50);
+        saveState();
+        showMessage({
+            text: "Volviste tras un colapso. Tu cuerpo sigue bajo presión.",
+            source: "Reingreso"
+        });
+    }
+}
+
+function restoreModalState() {
+    if (GameState.isDead) {
+        triggerDeath(GameState.causeOfDeath || {
+            name: "Fallo sistémico",
+            desc: "Tu cuerpo no soportó la acumulación de daño."
+        });
+    }
+}
+
+function markInteraction() {
+    GameState.lastInteraction = Date.now();
 }
 
 // ========================================
@@ -233,7 +298,8 @@ function actionSmoke() {
     GameState.toxicity = Math.min(100, GameState.toxicity + CONFIG.TOXICITY_GAIN_PER_PACK);
 
     GameState.cigarettesSmoked += CONFIG.CIGS_PER_ACTION;
-    GameState.lastInteraction = Date.now();
+    GameState.monthsSinceLastSmoke = 0;
+    markInteraction();
 
     // Effects & Feedback
     triggerSmokeEffect();
@@ -241,6 +307,7 @@ function actionSmoke() {
     // Check specific risk on ACTION (Active Risk)
     // Every pack rolls a dice based on Bio Age
     checkActionRisk();
+    if (GameState.isDead) return;
 
     // Acute Warning
     if (GameState.toxicity > CONFIG.TOXICITY_WARNING) {
@@ -254,6 +321,7 @@ function actionSmoke() {
     }
 
     if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+    if (checkCriticalConditions()) return;
     saveState();
     updateUI();
 }
@@ -306,10 +374,12 @@ function actionHeal() { // "Comer Sano"
     // Apply healing
     GameState.health = Math.min(100, GameState.health + amount);
     GameState.addiction = Math.max(0, GameState.addiction - CONFIG.ADDICTION_LOSS_PER_ACTION);
+    markInteraction();
 
     // Feedback 
     showMessage({ text: "Comida nutritiva para un mes completo.", source: "Dieta Saludable" });
 
+    if (checkCriticalConditions()) return;
     saveState();
     updateUI();
 }
@@ -326,6 +396,7 @@ function actionExercise() {
     GameState.health = Math.min(100, GameState.health + (CONFIG.HEALTH_GAIN_PER_EXERCISE * factor));
     GameState.toxicity = Math.max(0, GameState.toxicity - (CONFIG.TOXICITY_LOSS_PER_EXERCISE * factor));
     GameState.addiction = Math.max(0, GameState.addiction - (CONFIG.ADDICTION_LOSS_PER_ACTION * 2));
+    markInteraction();
 
     // Visual feedback
     UI.character.classList.add('bounce');
@@ -337,6 +408,7 @@ function actionExercise() {
         showMessage(getRandomItem(SYMPTOMS.exercise));
     }
 
+    if (checkCriticalConditions()) return;
     saveState();
     updateUI();
 }
@@ -348,10 +420,18 @@ function actionExercise() {
 // UI UPDATE
 // ========================================
 function updateUI() {
+    const risk = getRiskSnapshot();
+
     // Numeric displays
-    // Repurposing Health Bar for Stamina/Cleanliness? Or just keep it.
     UI.healthValue.textContent = `${Math.round(GameState.health)}%`;
     UI.addictionValue.textContent = `${Math.round(GameState.addiction)}%`;
+    UI.toxicityValue.textContent = `${Math.round(GameState.toxicity)}%`;
+    UI.hungerValue.textContent = `${Math.round(GameState.hunger)}%`;
+    UI.inactivityValue.textContent = `${Math.round(GameState.inactivity)}%`;
+
+    UI.toxicityBar.style.width = `${GameState.toxicity}%`;
+    UI.hungerBar.style.width = `${GameState.hunger}%`;
+    UI.inactivityBar.style.width = `${GameState.inactivity}%`;
 
     // Timeline / Age Display
     UI.lifeLostCard.classList.remove('hidden');
@@ -376,6 +456,14 @@ function updateUI() {
         </div>
     `;
 
+    UI.streakValue.textContent = Math.floor(GameState.monthsSinceLastSmoke);
+    UI.packsValue.textContent = Math.floor(GameState.cigarettesSmoked / CONFIG.CIGS_PER_ACTION);
+    UI.riskScoreValue.textContent = risk.score;
+    UI.riskNote.textContent = risk.note;
+
+    UI.riskPill.textContent = risk.label;
+    UI.riskPill.className = `risk-pill ${risk.className}`;
+
     // Addiction warning
     if (GameState.addiction > 50) {
         UI.addictionCard.classList.add('stat-warning');
@@ -392,16 +480,23 @@ function updateUI() {
     }
 
     // Body & Character State (Based on Bio Age)
-    updateVisualState();
+    updateVisualState(risk);
+    updateThoughtBubble(risk);
+
+    if (!currentMessageTimeout) {
+        renderPersistentMessage();
+    }
 
     // Check Death (Age Based)
     checkMortality();
 }
 
-function updateVisualState() {
+function updateVisualState(risk) {
     // Character gets "Old" visually?
     UI.body.classList.remove('state-healthy', 'state-warning', 'state-danger');
     UI.character.classList.remove('state-healthy', 'state-sick', 'state-critical');
+
+    UI.body.classList.add(risk.bodyState);
 
     // Filter grey based on age? 
     // Or just use health for acute states
@@ -412,6 +507,28 @@ function updateVisualState() {
     } else {
         UI.character.classList.add('state-healthy');
     }
+}
+
+function updateThoughtBubble(risk) {
+    if (GameState.isDead || GameState.isCollapsed) {
+        UI.thoughtBubble.classList.remove('visible');
+        return;
+    }
+
+    let bubble = '';
+
+    if (GameState.addiction >= 60) bubble = '🚬';
+    else if (GameState.hunger >= CONFIG.THRESHOLD_HUNGER) bubble = '🍽️';
+    else if (GameState.inactivity >= CONFIG.THRESHOLD_SEDENTARY) bubble = '🏃';
+    else if (risk.score <= 30 && GameState.monthsSinceLastSmoke >= 6) bubble = '✨';
+
+    if (!bubble) {
+        UI.thoughtBubble.classList.remove('visible');
+        return;
+    }
+
+    UI.thoughtBubble.textContent = bubble;
+    UI.thoughtBubble.classList.add('visible');
 }
 
 function checkMortality() {
@@ -444,6 +561,56 @@ function checkMortality() {
     }
 }
 
+function getRiskSnapshot() {
+    const ageGapYears = Math.max(0, (GameState.biologicalAgeInMonths - GameState.ageInMonths) / 12);
+    const score = Math.round(
+        ((100 - GameState.health) * 0.28) +
+        (GameState.toxicity * 0.24) +
+        (GameState.addiction * 0.18) +
+        (GameState.hunger * 0.12) +
+        (GameState.inactivity * 0.08) +
+        (Math.min(100, ageGapYears * 8) * 0.10)
+    );
+
+    if (score >= 80 || GameState.health <= 20 || GameState.toxicity >= 85) {
+        return {
+            score,
+            label: "Crítico",
+            className: "risk-critical",
+            bodyState: "state-danger",
+            note: "La mezcla de daño acumulado y desgaste agudo ya es compatible con colapso."
+        };
+    }
+
+    if (score >= 55 || GameState.addiction >= 60 || GameState.toxicity >= CONFIG.TOXICITY_WARNING) {
+        return {
+            score,
+            label: "Alto",
+            className: "risk-high",
+            bodyState: "state-danger",
+            note: "Tu organismo está compensando como puede. Una cajetilla más acelera mucho el daño."
+        };
+    }
+
+    if (score >= 30 || GameState.hunger >= 60 || GameState.inactivity >= 60) {
+        return {
+            score,
+            label: "Vigilancia",
+            className: "risk-medium",
+            bodyState: "state-warning",
+            note: "Todavía hay margen para revertir, pero ya aparecen señales de deterioro."
+        };
+    }
+
+    return {
+        score,
+        label: "Estable",
+        className: "risk-low",
+        bodyState: "state-healthy",
+        note: "Tu cuerpo sigue estable. Lo peligroso es acostumbrarse a hacer daño sin sentirlo de inmediato."
+    };
+}
+
 // ========================================
 // EFFECTS & FEEDBACK
 // ========================================
@@ -454,6 +621,13 @@ function triggerSmokeEffect() {
 }
 
 let currentMessageTimeout = null;
+
+function renderPersistentMessage() {
+    const ambientMessage = getAmbientMessage();
+    UI.gameMessage.textContent = ambientMessage.text;
+    UI.messageSource.textContent = ambientMessage.source ? `— ${ambientMessage.source}` : '';
+    UI.messageCard.classList.add('visible');
+}
 
 function showMessage(symptom) {
     // Clear previous timeout if exists (Instant Swap)
@@ -469,13 +643,44 @@ function showMessage(symptom) {
     UI.messageCard.classList.add('visible');
 
     currentMessageTimeout = setTimeout(() => {
-        UI.messageCard.classList.remove('visible');
+        renderPersistentMessage();
         currentMessageTimeout = null;
     }, CONFIG.MESSAGE_DURATION_MS);
 }
 
 function getRandomItem(array) {
     return array[Math.floor(Math.random() * array.length)];
+}
+
+function getAmbientMessage() {
+    if (GameState.isDead) {
+        return {
+            text: GameState.causeOfDeath?.desc || DEFAULT_MESSAGE.text,
+            source: GameState.causeOfDeath?.name || DEFAULT_MESSAGE.source
+        };
+    }
+
+    if (GameState.addiction >= 65) {
+        return { text: "La adicción está decidiendo por ti. Cada pausa sin fumar vale más ahora.", source: "Dependencia" };
+    }
+
+    if (GameState.toxicity >= CONFIG.TOXICITY_WARNING) {
+        return { text: "Tus síntomas ya no son invisibles. Tu cuerpo te está avisando con claridad.", source: "Toxicidad" };
+    }
+
+    if (GameState.hunger >= CONFIG.THRESHOLD_HUNGER) {
+        return { text: "Sin nutrición suficiente, no solo pierdes energía: también envejeces más rápido.", source: "Hambre" };
+    }
+
+    if (GameState.inactivity >= CONFIG.THRESHOLD_SEDENTARY) {
+        return { text: "Estar quieto demasiado tiempo también envejece. Muévete antes de normalizarlo.", source: "Sedentarismo" };
+    }
+
+    if (GameState.monthsSinceLastSmoke >= 12) {
+        return { text: "Llevas un año simulado sin fumar. El beneficio es real, aunque no se vea en una sola acción.", source: "Recuperación" };
+    }
+
+    return DEFAULT_MESSAGE;
 }
 
 // ========================================
@@ -489,10 +694,12 @@ function getRandomItem(array) {
 // ========================================
 function startGameLoop() {
     setInterval(() => {
-        if (GameState.isDead) return;
+        if (GameState.isDead || GameState.isCollapsed) return;
 
         // 1. Natural Aging (1 Month per second)
         GameState.ageInMonths += CONFIG.MONTHS_PER_TICK;
+        GameState.monthsSinceLastSmoke += CONFIG.MONTHS_PER_TICK;
+        GameState.bestRecoveryStreak = Math.max(GameState.bestRecoveryStreak, GameState.monthsSinceLastSmoke);
         let bioAcceleration = CONFIG.MONTHS_PER_TICK;
 
         // 2. Lifestyle Decay
@@ -545,8 +752,29 @@ function startGameLoop() {
             GameState.toxicity = Math.max(0, GameState.toxicity - CONFIG.TOXICITY_DECAY_PER_TICK);
         }
 
+        if (checkCriticalConditions()) return;
         updateUI(); // Updates visuals and checks for death via checkMortality()
+        saveState();
     }, 1000); // 1 Tick = 1 Real Second
+}
+
+function checkCriticalConditions() {
+    if (GameState.isDead || GameState.isCollapsed) return true;
+
+    if (GameState.health <= 0) {
+        triggerDeath({
+            name: "Fallo sistémico",
+            desc: "El daño acumulado terminó afectando funciones vitales."
+        });
+        return true;
+    }
+
+    if (GameState.toxicity >= CONFIG.TOXICITY_COLLAPSE) {
+        triggerCollapse();
+        return true;
+    }
+
+    return false;
 }
 
 // ========================================
@@ -573,6 +801,7 @@ function triggerDeath(cause) {
 
     // Reusing the modal logic
     UI.modal.classList.add('visible');
+    UI.modalTitle.textContent = cause.name === "Muerte Natural" ? "Final de ciclo" : "Juego terminado";
 
     let titleColor = cause.name === "Muerte Natural" ? "#4caf50" : "#ff4444";
 
@@ -589,10 +818,8 @@ function triggerDeath(cause) {
     `;
 
     // Reset button
-    const closeBtn = document.getElementById('modal-reset');
-    closeBtn.textContent = "Reencarnar (Reiniciar)";
-    closeBtn.disabled = false;
-    closeBtn.onclick = resetGame;
+    UI.modalReset.textContent = "Reencarnar (Reiniciar)";
+    UI.modalReset.disabled = false;
 }
 
 function resetGame() {
@@ -601,10 +828,20 @@ function resetGame() {
     GameState.health = 100;
     GameState.addiction = 0;
     GameState.toxicity = 0;
+    GameState.hunger = 0;
+    GameState.inactivity = 0;
     GameState.cigarettesSmoked = 0;
+    GameState.monthsSinceLastSmoke = 0;
+    GameState.bestRecoveryStreak = 0;
     GameState.isDead = false;
     GameState.isCollapsed = false;
+    GameState.isHospitalized = false;
+    GameState.causeOfDeath = null;
+    markInteraction();
 
+    UI.modalTitle.textContent = "Colapso";
+    UI.modalReset.textContent = "Intentar de nuevo";
+    UI.modalReset.disabled = false;
     UI.modal.classList.remove('visible');
     saveState();
     updateUI();
@@ -613,8 +850,13 @@ function resetGame() {
 
 // Keeping basic collapse for acute toxicity
 function triggerCollapse() {
+    if (GameState.isCollapsed) return;
+
     GameState.isCollapsed = true;
     saveState();
+    UI.modalTitle.textContent = "Colapso";
+    UI.modalReset.textContent = "Recuperando...";
+    UI.modalReset.disabled = true;
     UI.modalBody.innerHTML = `
         <strong>Colapso (Intoxicación)</strong><br>
         Demasiada nicotina de golpe.<br>
@@ -625,7 +867,10 @@ function triggerCollapse() {
     setTimeout(() => {
         GameState.isCollapsed = false;
         GameState.toxicity = 50;
+        UI.modalReset.textContent = "Intentar de nuevo";
+        UI.modalReset.disabled = false;
         UI.modal.classList.remove('visible');
+        saveState();
         updateUI();
     }, 4000);
 }

@@ -7,6 +7,8 @@
         content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="description"
+        content="Simulador interactivo de prevención para visualizar el impacto del tabaquismo, la alimentación y la actividad física en el cuerpo.">
     <meta name="theme-color" content="#667eea">
     <title>Viaje de Humo</title>
     <link rel="stylesheet" href="css/styles.css">
@@ -54,6 +56,65 @@
                 </div>
             </div>
         </main>
+
+        <section id="status-panel" class="glass-card">
+            <div class="panel-header">
+                <div>
+                    <p class="panel-eyebrow">Panel corporal</p>
+                    <h1 class="panel-title">Riesgo actual</h1>
+                </div>
+                <div id="risk-pill" class="risk-pill risk-low">Estable</div>
+            </div>
+
+            <div class="meter-grid">
+                <div class="meter-card">
+                    <div class="meter-header">
+                        <span>Toxicidad</span>
+                        <strong id="toxicity-value">0%</strong>
+                    </div>
+                    <div class="meter-track">
+                        <div id="toxicity-bar" class="meter-fill meter-danger"></div>
+                    </div>
+                </div>
+
+                <div class="meter-card">
+                    <div class="meter-header">
+                        <span>Hambre</span>
+                        <strong id="hunger-value">0%</strong>
+                    </div>
+                    <div class="meter-track">
+                        <div id="hunger-bar" class="meter-fill meter-warning"></div>
+                    </div>
+                </div>
+
+                <div class="meter-card">
+                    <div class="meter-header">
+                        <span>Sedentarismo</span>
+                        <strong id="inactivity-value">0%</strong>
+                    </div>
+                    <div class="meter-track">
+                        <div id="inactivity-bar" class="meter-fill meter-info"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="summary-strip">
+                <div class="summary-chip">
+                    <strong id="streak-value">0</strong>
+                    <span>meses sin fumar</span>
+                </div>
+                <div class="summary-chip">
+                    <strong id="packs-value">0</strong>
+                    <span>cajetillas</span>
+                </div>
+                <div class="summary-chip">
+                    <strong id="risk-score-value">0</strong>
+                    <span>carga de riesgo</span>
+                </div>
+            </div>
+
+            <p id="risk-note">Tu cuerpo sigue estable. Lo peligroso en este juego es normalizar el daño antes de sentirlo.</p>
+        </section>
 
         <!-- Controls -->
         <footer id="controls">
